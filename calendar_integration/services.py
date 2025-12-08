@@ -5,10 +5,8 @@ from meetings.models import Meeting, MeetingParticipant
 
 
 def _format_dt_utc(dt: datetime) -> str:
-    # datetime যদি naive হয়, আগে project timezone দিয়ে aware করা
     if timezone.is_naive(dt):
         dt = timezone.make_aware(dt, timezone.get_default_timezone())
-    # Python datetime.timezone.utc ব্যবহার করা (Django 5 compatible)
     dt = dt.astimezone(dt_timezone.utc)
     return dt.strftime("%Y%m%dT%H%M%SZ")
 

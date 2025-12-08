@@ -1,8 +1,6 @@
 from typing import Iterable, Sequence
-
 from django.db.models import Count, QuerySet
-
-from .models import Meeting, MeetingParticipant, Participant
+from .models import Meeting, MeetingParticipant
 from calendar_integration.services import generate_meeting_ics
 from notifications.services import send_meeting_invitations
 

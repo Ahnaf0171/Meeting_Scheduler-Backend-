@@ -1,14 +1,11 @@
 from rest_framework import serializers
-
 from .models import Meeting, Participant, MeetingParticipant
 from .services import MeetingService
-
 
 class ParticipantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Participant
         fields = ("id", "email", "name")
-
 
 class MeetingParticipantSerializer(serializers.ModelSerializer):
     participant = ParticipantSerializer(read_only=True)
@@ -24,9 +21,7 @@ class MeetingParticipantSerializer(serializers.ModelSerializer):
             "created_at",
         )
 
-
 class MeetingListSerializer(serializers.ModelSerializer):
-    # MeetingService.list_for_user e annotate hocche: participants_count
     participant_count = serializers.IntegerField(
         source="participants_count", read_only=True
     )
@@ -49,7 +44,6 @@ class MeetingListSerializer(serializers.ModelSerializer):
 
 
 class MeetingDetailSerializer(serializers.ModelSerializer):
-    # MeetingParticipant.meeting -> related_name="meeting_participants"
     participants = MeetingParticipantSerializer(
         source="meeting_participants", many=True, read_only=True
     )
@@ -74,13 +68,11 @@ class MeetingDetailSerializer(serializers.ModelSerializer):
 
 
 class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
-    # { "participants": [ { "email": "...", "name": "...", ... }, ... ] }
     participants = serializers.ListField(
         child=serializers.DictField(),
         write_only=True,
         required=False,
     )
-    # API response e host jeno bujhte pare kon participant busy chilo
     conflicts = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
@@ -98,15 +90,11 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-        """
-        create & update duitar jonnoi time validate korbo.
-        partial update e jodi ekta matro field thake, onnotar jonno instance theke value nebo.
-        """
+       
         start = attrs.get("start_time")
         end = attrs.get("end_time")
 
         if self.instance is not None:
-            # update case
             if start is None:
                 start = self.instance.start_time
             if end is None:
@@ -135,9 +123,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
             **validated_data,
         )
 
-        # only free participants save hobe
         self._sync_participants(meeting, allowed_participants)
-        # response e use korbo
         self.conflict_info = conflict_info
         return meeting
 
@@ -167,11 +153,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
         end_time,
         exclude_meeting_id=None,
     ):
-        """
-        participants_data -> (allowed, conflicts)
-        - allowed: jeader kono conflict nai (meeting e add hobe)
-        - conflicts: jeader onno meeting ase (response e dekhabo)
-        """
+        
         normalized = []
         for item in participants_data:
             email_raw = (item.get("email") or "").strip().lower()
@@ -213,9 +195,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
         return allowed_participants, conflict_info
 
     def _sync_participants(self, meeting, participants_data):
-        """
-        existing MeetingParticipant gulo update/remove, notun gulo create.
-        """
+     
         existing_links = {
             mp.participant.email.lower(): mp
             for mp in MeetingParticipant.objects.select_related("participant").filter(
@@ -232,7 +212,6 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
             seen_emails.add(email)
             name = item.get("name") or ""
 
-            # valid enum defaults
             role = item.get("role") or MeetingParticipant.Role.REQUIRED
             response_status = (
                 item.get("response_status")
@@ -266,19 +245,13 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
                     is_required=is_required,
                 )
 
-        # jei participant r list e nai, oigula remove
         if existing_links:
             MeetingParticipant.objects.filter(
                 id__in=[mp.id for mp in existing_links.values()]
             ).delete()
 
     def get_conflicts(self, obj):
-        """
-        create/update request e set kora conflict_info return korbo.
-        onno khetre (list, retrieve) empty list.
-        """
         return getattr(self, "conflict_info", [])
-
 
 class ConflictCheckSerializer(serializers.Serializer):
     participant_emails = serializers.ListField(

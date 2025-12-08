@@ -17,11 +17,8 @@ class MeetingForm(forms.ModelForm):
         )
 
     def __init__(self, *args, **kwargs):
-        # view theke expect korbo: user=..., participants_data=[{...}, ...]
         self.user = kwargs.pop("user", None)
-        # eita expect korsi: list of dicts [{"email": "...", "name": "...", ...}]
         self.participants_data = kwargs.pop("participants_data", None)
-        # conflicts info rakhar jonno (host ke dekhano jabe)
         self.conflicts = []
         super().__init__(*args, **kwargs)
 
@@ -30,11 +27,9 @@ class MeetingForm(forms.ModelForm):
         start = cleaned.get("start_time")
         end = cleaned.get("end_time")
 
-        # time validation
         if start and end and end <= start:
             self.add_error("end_time", "End time must be after start time.")
 
-        # participants_data theke email gulo collect
         emails = []
         if self.participants_data:
             for item in self.participants_data:
@@ -42,7 +37,6 @@ class MeetingForm(forms.ModelForm):
                 if email:
                     emails.append(email)
 
-        # conflict check: meeting block korbo na, shudhu info store korbo
         if start and end and emails:
             conflicts_qs = MeetingService.conflicts_for(
                 start_time=start,
@@ -52,7 +46,7 @@ class MeetingForm(forms.ModelForm):
                 if self.instance and self.instance.id
                 else None,
             )
-            # API er moto: conflicts info host er jonno rakhi
+           
             self.conflicts = [
                 {
                     "participant_email": mp.participant.email,
@@ -69,22 +63,18 @@ class MeetingForm(forms.ModelForm):
     def save(self, commit=True):
         meeting = super().save(commit=False)
 
-        # notun meeting create hole created_by set korbo
         if self.user and not self.instance.pk:
             meeting.created_by = self.user
 
         if commit:
             meeting.save()
 
-            # jodi participants_data thake, ogula sync korbo
             if self.participants_data:
-                # jeigula conflict e chilo, oder email list
                 conflicted_emails = {
                     c["participant_email"].lower()
                     for c in getattr(self, "conflicts", [])
                 }
 
-                # existing MeetingParticipant link gulo map kore rakhi
                 existing_links = {
                     mp.participant.email.lower(): mp
                     for mp in MeetingParticipant.objects.select_related(
@@ -98,30 +88,25 @@ class MeetingForm(forms.ModelForm):
                     if not email or email in seen_emails:
                         continue
 
-                    # ei participant jodi conflict e thake, skip korbo
                     if email in conflicted_emails:
                         continue
 
                     seen_emails.add(email)
                     name = item.get("name") or ""
 
-                    # valid enum defaults
                     role = item.get("role") or MeetingParticipant.Role.REQUIRED
                     is_required = item.get("is_required", True)
 
-                    # Participant per-host (created_by) basis e
                     participant, _ = Participant.objects.get_or_create(
                         email=email,
                         user=meeting.created_by,
                         defaults={"name": name, "user": meeting.created_by},
                     )
 
-                    # name update (optional)
                     if name and participant.name != name:
                         participant.name = name
                         participant.save(update_fields=["name"])
 
-                    # age theke link thakle update, na thakle notun create
                     if email in existing_links:
                         mp = existing_links[email]
                         mp.role = role
@@ -136,14 +121,11 @@ class MeetingForm(forms.ModelForm):
                             is_required=is_required,
                         )
 
-                # jei link gulo ar participants_data te nai, chaile remove kori
                 if existing_links:
                     MeetingParticipant.objects.filter(
                         id__in=[mp.id for mp in existing_links.values()]
                     ).delete()
 
-                # finally, je participant-ra meeting-e attach hoyeche
-                # (mane jeigula conflict chilo na), sudhu oder kache auto email jabe
                 MeetingService.send_invitations(
                     meeting=meeting,
                     send_to_all=True,
