@@ -220,11 +220,9 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
             is_required = item.get("is_required", True)
 
             participant, created = Participant.objects.get_or_create(
-            email=email,
-            user=meeting.created_by,
-            defaults={"name": name, "user": meeting.created_by},
-            )
-
+                email=email,
+                defaults={"name": name},
+                )
             if name and participant.name != name:
                 participant.name = name
                 participant.save(update_fields=["name"])
@@ -267,7 +265,6 @@ class ConflictCheckSerializer(serializers.Serializer):
                 {"end_time": "end_time must be after start_time."}
             )
         return attrs
-
 
 class SendInvitationSerializer(serializers.Serializer):
     send_to_all = serializers.BooleanField(default=True)

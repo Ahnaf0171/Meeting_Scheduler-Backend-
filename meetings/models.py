@@ -4,7 +4,7 @@ from django.conf import settings
 
 class Participant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    email = models.EmailField(max_length=255, db_index=True)
+    email = models.EmailField(max_length=255, unique=True, db_index=True)
     name = models.CharField(max_length=255, blank=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -16,8 +16,11 @@ class Participant(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ("email", "user")
         ordering = ["email"]
+    
+    def save(self, *args, **kwargs):
+        self.email = self.email.lower()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name or self.email

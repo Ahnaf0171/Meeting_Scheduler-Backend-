@@ -23,13 +23,16 @@ class MeetingService:
         end_time,
         participant_emails: Sequence[str],
         exclude_meeting_id=None,
-    ) -> QuerySet[MeetingParticipant]:
+        ) -> QuerySet[MeetingParticipant]:
         if not participant_emails:
             return MeetingParticipant.objects.none()
+    
+        normalized_emails = [email.lower() for email in participant_emails]
+    
         qs = (
             MeetingParticipant.objects.select_related("meeting", "participant")
             .filter(
-                participant__email__in=participant_emails,
+                participant__email__in=normalized_emails,  
                 meeting__status=Meeting.Status.SCHEDULED,
             )
             .filter(
