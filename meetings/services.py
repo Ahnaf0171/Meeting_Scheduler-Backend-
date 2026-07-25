@@ -1,5 +1,5 @@
 from typing import Iterable, Sequence
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 from django.contrib.auth import get_user_model
 from .models import Meeting, MeetingParticipant, Participant
 from calendar_integration.services import generate_meeting_ics
@@ -7,13 +7,24 @@ from notifications.tasks import send_invitations_task, notify_cancelled_task
 
 
 class MeetingService:
+
+    @staticmethod
+    def _participant_count_subquery():
+        return Subquery(
+            MeetingParticipant.objects.filter(meeting=OuterRef("pk"))
+            .order_by()
+            .values("meeting")
+            .annotate(c=Count("id"))
+            .values("c")
+        )
+
     @classmethod
     def list_for_user(cls, user) -> QuerySet[Meeting]:
         return (
             Meeting.objects.filter(created_by=user)
             .select_related("created_by")
             .prefetch_related("meeting_participants__participant")
-            .annotate(participants_count=Count("meeting_participants"))
+            .annotate(participants_count=cls._participant_count_subquery())
         )
 
     @classmethod
@@ -24,7 +35,7 @@ class MeetingService:
             )
             .select_related("created_by")
             .prefetch_related("meeting_participants__participant")
-            .annotate(participants_count=Count("meeting_participants"))
+            .annotate(participants_count=cls._participant_count_subquery())
             .distinct()
         )
 
@@ -35,7 +46,7 @@ class MeetingService:
             .exclude(created_by=user)
             .select_related("created_by")
             .prefetch_related("meeting_participants__participant")
-            .annotate(participants_count=Count("meeting_participants"))
+            .annotate(participants_count=cls._participant_count_subquery())
             .distinct()
         )
 
@@ -138,6 +149,58 @@ class MeetingService:
                 participant.save(update_fields=["user"])
 
         return participant
+
+    @classmethod
+    def sync_participants(
+        cls, meeting: Meeting, participants_data: list[dict]
+    ) -> set[str]:
+
+        normalized: dict[str, dict] = {}
+        for item in participants_data:
+            email = (item.get("email") or "").strip().lower()
+            if email and email not in normalized:
+                normalized[email] = item
+
+        existing_links = {
+            mp.participant.email: mp
+            for mp in MeetingParticipant.objects.select_related("participant").filter(
+                meeting=meeting
+            )
+        }
+
+        newly_added_emails: set[str] = set()
+
+        for email, item in normalized.items():
+            participant = cls.get_or_create_participant(
+                email=email, name=item.get("name") or ""
+            )
+            role = item.get("role") or MeetingParticipant.Role.REQUIRED
+            response_status = (
+                item.get("response_status") or MeetingParticipant.ResponseStatus.INVITED
+            )
+            is_required = item.get("is_required", True)
+
+            if email in existing_links:
+                mp = existing_links.pop(email)
+                mp.role = role
+                mp.response_status = response_status
+                mp.is_required = is_required
+                mp.save(update_fields=["role", "response_status", "is_required"])
+            else:
+                MeetingParticipant.objects.create(
+                    meeting=meeting,
+                    participant=participant,
+                    role=role,
+                    response_status=response_status,
+                    is_required=is_required,
+                )
+                newly_added_emails.add(email)
+
+        stale_ids = [mp.id for mp in existing_links.values()]
+        if stale_ids:
+            MeetingParticipant.objects.filter(id__in=stale_ids).delete()
+
+        return newly_added_emails
 
     @classmethod
     def record_response(cls, meeting: Meeting, *, user, response_status: str) -> MeetingParticipant:

@@ -11,16 +11,21 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# .env MUST load before any os.getenv() call below — this was the bug
+# causing "ALLOWED_HOSTS must be set" even with DEBUG=True in .env.
+load_dotenv(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-import os
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-insecure-key")
 
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
@@ -55,6 +60,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -147,12 +153,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = "accounts.User"
 
-from pathlib import Path
-import os
-from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+# Email
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"
@@ -163,6 +165,14 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 
 DEFAULT_FROM_EMAIL = os.getenv("EMAIL_HOST_USER")
 ICS_PRODID_DOMAIN = os.getenv("ICS_PRODID_DOMAIN", "meeting-scheduler.local")
+
+
+# CORS
+# https://github.com/adamchainz/django-cors-headers
+
+CORS_ALLOWED_ORIGINS = [
+    origin for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if origin
+]
 
 
 REST_FRAMEWORK = {
@@ -198,12 +208,6 @@ SIMPLE_JWT = {
 HUEY = {
     "huey_class": "huey.SqliteHuey",
     "filename": BASE_DIR / "huey.sqlite3",
-    "immediate": False,  
+    "immediate": False,
     "results": True,
 }
-
-CSRF_TRUSTED_ORIGINS = (
-    [origin for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if origin]
-    if not DEBUG
-    else []
-)

@@ -125,7 +125,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
             **validated_data,
         )
 
-        self._sync_participants(meeting, allowed_participants)
+        MeetingService.sync_participants(meeting, allowed_participants)
         self.conflict_info = conflict_info
         return meeting
 
@@ -139,7 +139,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
                 end_time=validated_data.get("end_time", instance.end_time),
                 exclude_meeting_id=instance.id,
             )
-            self._sync_participants(instance, allowed_participants)
+            MeetingService.sync_participants(instance, allowed_participants)
             self.conflict_info = conflict_info
 
         for attr, value in validated_data.items():
@@ -194,53 +194,6 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
             item for email, item in normalized if email not in conflicted_emails
         ]
         return allowed_participants, conflict_info
-
-    def _sync_participants(self, meeting, participants_data):
-        existing_links = {
-            mp.participant.email.lower(): mp
-            for mp in MeetingParticipant.objects.select_related("participant").filter(
-                meeting=meeting
-            )
-        }
-        seen_emails = set()
-
-        for item in participants_data:
-            email = (item.get("email") or "").strip().lower()
-            if not email or email in seen_emails:
-                continue
-
-            seen_emails.add(email)
-            name = item.get("name") or ""
-
-            role = item.get("role") or MeetingParticipant.Role.REQUIRED
-            response_status = (
-                item.get("response_status")
-                or MeetingParticipant.ResponseStatus.INVITED
-            )
-            is_required = item.get("is_required", True)
-
-            participant = MeetingService.get_or_create_participant(email=email, name=name)
-
-            if email in existing_links:
-                mp = existing_links[email]
-                mp.role = role
-                mp.response_status = response_status
-                mp.is_required = is_required
-                mp.save(update_fields=["role", "response_status", "is_required"])
-                del existing_links[email]
-            else:
-                MeetingParticipant.objects.create(
-                    meeting=meeting,
-                    participant=participant,
-                    role=role,
-                    response_status=response_status,
-                    is_required=is_required,
-                )
-
-        if existing_links:
-            MeetingParticipant.objects.filter(
-                id__in=[mp.id for mp in existing_links.values()]
-            ).delete()
 
     def get_conflicts(self, obj):
         return getattr(self, "conflict_info", [])
