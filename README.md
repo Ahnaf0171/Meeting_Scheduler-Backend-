@@ -1,156 +1,107 @@
 # Meeting Scheduler API
 
-A Django REST Framework service for scheduling meetings with conflict detection and calendar integration.
+A Django REST Framework backend for scheduling meetings with conflict detection, calendar (.ics) export, and async email notifications.
 
-## 🚀 Live Demo
-
-**API:** https://meeting-scheduler-backend-ix2d.onrender.com  
+**Live API:** https://meeting-scheduler-backend-ix2d.onrender.com  
 **Docs:** https://meeting-scheduler-backend-ix2d.onrender.com/api/docs/
 
 ## Features
 
-- JWT Authentication
+- JWT authentication (register, login, logout, token refresh)
 - Meeting CRUD with participant management
-- Automatic conflict detection
-- Email notifications with calendar invites
-- ICS file export for calendar apps
-- Google Calendar integration
+- Automatic conflict detection — skips double-booked participants
+- RSVP flow (accept / decline / tentative)
+- Meeting cancellation with auto-notification to participants
+- Async email invitations & cancellations via Huey (non-blocking)
+- ICS export for Google Calendar / Outlook / Apple Calendar
+- CORS-enabled, rate-limited API
 
 ## Tech Stack
 
-Django • DRF • JWT • SMTP
+Django • Django REST Framework • Simple JWT • Huey • SMTP
 
 ## API Endpoints
 
-### Auth
+**Auth**
 
 ```
-POST   /api/auth/register/    Register user
-POST   /api/auth/login/       Login (returns JWT)
-POST   /api/auth/logout/      Logout
-GET    /api/auth/me/          Get profile
+POST  /api/auth/register/
+POST  /api/auth/login/
+POST  /api/auth/logout/
+POST  /api/auth/token/refresh/
+GET   /api/auth/me/
 ```
 
-### Meetings
+**Meetings**
 
 ```
-GET    /api/meetings/              List all meetings
-POST   /api/meetings/              Create meeting
-GET    /api/meetings/{id}/         Get meeting details
-PUT    /api/meetings/{id}/         Update meeting
-PATCH  /api/meetings/{id}/         Partial update
-DELETE /api/meetings/{id}/         Delete meeting
-GET    /api/meetings/{id}/export-ics/  Export ICS
+GET    /api/meetings/                     My meetings
+GET    /api/meetings/invited/             Meetings I'm invited to
+POST   /api/meetings/                     Create
+GET    /api/meetings/{id}/                Detail
+PUT    /api/meetings/{id}/PATCH           Update
+DELETE /api/meetings/{id}/                Delete
+
+POST   /api/meetings/{id}/check-conflicts/
+POST   /api/meetings/{id}/send-invitations/
+POST   /api/meetings/{id}/respond/
+POST   /api/meetings/{id}/cancel/
+GET    /api/meetings/{id}/export-ics/
 ```
 
 ## Quick Start
 
 ```bash
-# Clone and setup
 git clone <repo-url>
 cd meeting-scheduler
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your credentials
-
-# Run
+cp .env.example .env            # then fill in your values
 python manage.py migrate
-python manage.py runserver
+
+python manage.py runserver      # Terminal 1
+python manage.py run_huey       # Terminal 2 — required, or emails never send
 ```
-
-## Usage Example
-
-### Register
-
-```json
-POST /api/auth/register/
-{
-  "email": "user@example.com",
-  "first_name": "John",
-  "last_name": "Doe",
-  "password": "SecurePass@123",
-  "password2": "SecurePass@123"
-}
-```
-
-### Create Meeting
-
-```json
-POST /api/meetings/
-Authorization: Bearer {token}
-
-{
-  "title": "Project Kickoff",
-  "description": "Planning session",
-  "location": "Conference Room A",
-  "start_time": "2026-01-12T10:00:00+06:00",
-  "end_time": "2026-01-12T11:00:00+06:00",
-  "timezone": "Asia/Dhaka",
-  "participants": [
-    {"email": "alice@example.com", "name": "Alice"},
-    {"email": "bob@example.com", "name": "Bob"}
-  ]
-}
-```
-
-### Response with Conflicts
-
-```json
-{
-  "id": 1,
-  "title": "Project Kickoff",
-  "conflicts": [
-    {
-      "email": "alice@example.com",
-      "conflicting_meeting": "Team Standup"
-    }
-  ],
-  "participants_added": ["bob@example.com"],
-  "participants_skipped": ["alice@example.com"]
-}
-```
-
-## Conflict Detection
-
-System automatically:
-
-- Checks participant availability
-- Detects time overlaps
-- Skips conflicting participants
-- Notifies host about conflicts
-- Creates meeting with available participants
-
-**Algorithm:** O(n) time complexity
 
 ## Environment Variables
 
 ```env
 SECRET_KEY=your_secret_key
 DEBUG=True
-DATABASE_URL=postgresql://user:pass@localhost/db
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_HOST_USER=your@email.com
+ALLOWED_HOSTS=yourdomain.com
+CORS_ALLOWED_ORIGINS=https://my-frontend-domain.com
+
+EMAIL_HOST_USER=my@email.com
 EMAIL_HOST_PASSWORD=your_app_password
+ICS_PRODID_DOMAIN=meeting-scheduler.local
+
+# Optional — omit locally, task queue falls back to SQLite
+REDIS_URL=redis://localhost:6379/0
 ```
+
+`SECRET_KEY` is required in production (`DEBUG=False`) — the app refuses to start without it.
 
 ## Project Structure
 
 ```
 meeting_scheduler/
-├── accounts/              User auth & profiles
-├── meetings/              Meeting logic & CRUD
-├── calendar_integration/  ICS & Google Calendar
-└── notifications/         Email service
+├── accounts/               JWT auth, user model
+├── meetings/                Meeting CRUD, conflict detection, RSVP, cancellation
+├── calendar_integration/    ICS generation
+└── notifications/           Async email sending (invitations, cancellations)
 ```
 
-## Email Workflow
+## Conflict Detection
 
-1. Host creates meeting
-2. System detects conflicts
-3. Sends invites to available participants
-4. Email includes Google Calendar link + ICS attachment
+For each participant email, checks their existing `SCHEDULED` meetings for time overlap (`start < other.end AND end > other.start`). Conflicting participants are skipped automatically, and the conflict is returned in the API response so the organizer knows who was skipped.
+
+## Async Email
+
+Emails are dispatched via a Huey background task, not inline in the request — API responses stay fast regardless of participant count. Locally this uses a SQLite-backed queue; set `REDIS_URL` to switch to Redis in production. **The `run_huey` worker must be running for emails to actually send.**
+
+## Rate Limiting
+
+- Anonymous requests: 20/minute
+- Authenticated requests: 100/minute
