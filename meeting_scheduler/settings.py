@@ -24,7 +24,11 @@ import os
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-insecure-key")
 
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",") if not DEBUG else ["*"]
+ALLOWED_HOSTS = (
+    [host for host in os.getenv("ALLOWED_HOSTS", "").split(",") if host]
+    if not DEBUG
+    else ["*"]
+)
 CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if not DEBUG else []
 
 
@@ -197,3 +201,9 @@ HUEY = {
     "immediate": False,  
     "results": True,
 }
+
+CSRF_TRUSTED_ORIGINS = (
+    [origin for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if origin]
+    if not DEBUG
+    else []
+)
