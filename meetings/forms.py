@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Meeting, Participant, MeetingParticipant
+from .models import Meeting, MeetingParticipant
 from .services import MeetingService
 
 
@@ -46,7 +46,7 @@ class MeetingForm(forms.ModelForm):
                 if self.instance and self.instance.id
                 else None,
             )
-           
+
             self.conflicts = [
                 {
                     "participant_email": mp.participant.email,
@@ -62,8 +62,9 @@ class MeetingForm(forms.ModelForm):
 
     def save(self, commit=True):
         meeting = super().save(commit=False)
+        is_new_meeting = not self.instance.pk
 
-        if self.user and not self.instance.pk:
+        if self.user and is_new_meeting:
             meeting.created_by = self.user
 
         if commit:
@@ -81,6 +82,7 @@ class MeetingForm(forms.ModelForm):
                         "participant"
                     ).filter(meeting=meeting)
                 }
+                previously_existing_emails = set(existing_links.keys())
                 seen_emails = set()
 
                 for item in self.participants_data:
@@ -97,15 +99,9 @@ class MeetingForm(forms.ModelForm):
                     role = item.get("role") or MeetingParticipant.Role.REQUIRED
                     is_required = item.get("is_required", True)
 
-                    participant, _ = Participant.objects.get_or_create(
-                        email=email,
-                        user=meeting.created_by,
-                        defaults={"name": name, "user": meeting.created_by},
+                    participant = MeetingService.get_or_create_participant(
+                        email=email, name=name
                     )
-
-                    if name and participant.name != name:
-                        participant.name = name
-                        participant.save(update_fields=["name"])
 
                     if email in existing_links:
                         mp = existing_links[email]
@@ -126,10 +122,9 @@ class MeetingForm(forms.ModelForm):
                         id__in=[mp.id for mp in existing_links.values()]
                     ).delete()
 
-                MeetingService.send_invitations(
-                    meeting=meeting,
-                    send_to_all=True,
-                    participant_ids=[],
+                newly_added_emails = seen_emails - previously_existing_emails
+                MeetingService.send_invitations_to_new_participants(
+                    meeting, newly_added_emails
                 )
 
         return meeting

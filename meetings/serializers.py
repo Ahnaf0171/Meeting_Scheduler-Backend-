@@ -2,10 +2,12 @@ from rest_framework import serializers
 from .models import Meeting, Participant, MeetingParticipant
 from .services import MeetingService
 
+
 class ParticipantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Participant
         fields = ("id", "email", "name")
+
 
 class MeetingParticipantSerializer(serializers.ModelSerializer):
     participant = ParticipantSerializer(read_only=True)
@@ -20,6 +22,7 @@ class MeetingParticipantSerializer(serializers.ModelSerializer):
             "is_required",
             "created_at",
         )
+
 
 class MeetingListSerializer(serializers.ModelSerializer):
     participant_count = serializers.IntegerField(
@@ -90,7 +93,6 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-       
         start = attrs.get("start_time")
         end = attrs.get("end_time")
 
@@ -153,7 +155,6 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
         end_time,
         exclude_meeting_id=None,
     ):
-        
         normalized = []
         for item in participants_data:
             email_raw = (item.get("email") or "").strip().lower()
@@ -195,7 +196,6 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
         return allowed_participants, conflict_info
 
     def _sync_participants(self, meeting, participants_data):
-     
         existing_links = {
             mp.participant.email.lower(): mp
             for mp in MeetingParticipant.objects.select_related("participant").filter(
@@ -219,13 +219,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
             )
             is_required = item.get("is_required", True)
 
-            participant, created = Participant.objects.get_or_create(
-                email=email,
-                defaults={"name": name},
-                )
-            if name and participant.name != name:
-                participant.name = name
-                participant.save(update_fields=["name"])
+            participant = MeetingService.get_or_create_participant(email=email, name=name)
 
             if email in existing_links:
                 mp = existing_links[email]
@@ -251,6 +245,7 @@ class MeetingCreateUpdateSerializer(serializers.ModelSerializer):
     def get_conflicts(self, obj):
         return getattr(self, "conflict_info", [])
 
+
 class ConflictCheckSerializer(serializers.Serializer):
     participant_emails = serializers.ListField(
         child=serializers.EmailField(),
@@ -266,6 +261,7 @@ class ConflictCheckSerializer(serializers.Serializer):
             )
         return attrs
 
+
 class SendInvitationSerializer(serializers.Serializer):
     send_to_all = serializers.BooleanField(default=True)
     participant_ids = serializers.ListField(
@@ -277,3 +273,13 @@ class SendInvitationSerializer(serializers.Serializer):
 
 class IcsExportOptionsSerializer(serializers.Serializer):
     include_participants = serializers.BooleanField(required=False, default=True)
+
+
+class RSVPSerializer(serializers.Serializer):
+    response_status = serializers.ChoiceField(
+        choices=MeetingParticipant.ResponseStatus.choices
+    )
+
+
+class MeetingCancelSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)

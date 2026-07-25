@@ -4,16 +4,20 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
-from .models import Meeting
+from .models import Meeting, MeetingParticipant
 from .serializers import (
     MeetingCreateUpdateSerializer,
     MeetingListSerializer,
     MeetingDetailSerializer,
+    MeetingParticipantSerializer,
     ConflictCheckSerializer,
     SendInvitationSerializer,
     IcsExportOptionsSerializer,
+    RSVPSerializer,
+    MeetingCancelSerializer,
 )
 from .services import MeetingService
+
 
 @extend_schema_view(
     list=extend_schema(tags=["Meetings"]),
@@ -25,6 +29,9 @@ from .services import MeetingService
     check_conflicts=extend_schema(tags=["Meetings"]),
     send_invitations=extend_schema(tags=["Meetings"]),
     export_ics=extend_schema(tags=["Meetings"]),
+    invited=extend_schema(tags=["Meetings"]),
+    respond=extend_schema(tags=["Meetings"]),
+    cancel=extend_schema(tags=["Meetings"]),
 )
 class MeetingViewSet(viewsets.ModelViewSet):
     queryset = Meeting.objects.none()
@@ -33,6 +40,8 @@ class MeetingViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             return Meeting.objects.none()
+        if self.action in ("retrieve", "respond"):
+            return MeetingService.list_visible_for_user(user)
         return MeetingService.list_for_user(user)
 
     def get_serializer_class(self):
@@ -49,6 +58,55 @@ class MeetingViewSet(viewsets.ModelViewSet):
             send_to_all=True,
             participant_ids=[],
         )
+
+    def perform_update(self, serializer):
+        previous_emails = set(
+            serializer.instance.meeting_participants.values_list(
+                "participant__email", flat=True
+            )
+        )
+        meeting = serializer.save()
+        current_emails = set(
+            meeting.meeting_participants.values_list("participant__email", flat=True)
+        )
+        new_emails = current_emails - previous_emails
+        MeetingService.send_invitations_to_new_participants(meeting, new_emails)
+
+    @action(detail=False, methods=["get"], url_path="invited")
+    def invited(self, request):
+        meetings = MeetingService.list_invited_for_user(request.user)
+        page = self.paginate_queryset(meetings)
+        serializer = MeetingListSerializer(page if page is not None else meetings, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="respond")
+    def respond(self, request, pk=None):
+        meeting = self.get_object()
+        serializer = RSVPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            mp = MeetingService.record_response(
+                meeting,
+                user=request.user,
+                response_status=serializer.validated_data["response_status"],
+            )
+        except MeetingParticipant.DoesNotExist as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(MeetingParticipantSerializer(mp).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        meeting = self.get_object()
+        serializer = MeetingCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        meeting = MeetingService.cancel(
+            meeting, reason=serializer.validated_data.get("reason", "")
+        )
+        return Response(MeetingDetailSerializer(meeting).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="check-conflicts")
     def check_conflicts(self, request, pk=None):
@@ -82,12 +140,12 @@ class MeetingViewSet(viewsets.ModelViewSet):
         serializer = SendInvitationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        sent = MeetingService.send_invitations(
+        queued = MeetingService.send_invitations(
             meeting=meeting,
             send_to_all=data.get("send_to_all", True),
             participant_ids=data.get("participant_ids") or [],
         )
-        return Response({"sent": sent}, status=status.HTTP_200_OK)
+        return Response({"queued": queued}, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=["get"], url_path="export-ics")
     def export_ics(self, request, pk=None):

@@ -7,17 +7,17 @@ logger = logging.getLogger(__name__)
 
 
 def send_meeting_invitations(meeting, meeting_participants):
-    ics_bytes = generate_meeting_ics(meeting, meeting_participants)    
+    ics_bytes = generate_meeting_ics(meeting, meeting_participants)
     sent = 0
     failed = []
-    
+
     for mp in meeting_participants:
         participant = mp.participant
-        
+
         if not participant.email:
             logger.warning(f"Skipping participant {participant.id} - no email address")
             continue
-        
+
         try:
             subject = f"Meeting Invitation: {meeting.title}"
             body = (
@@ -29,23 +29,23 @@ def send_meeting_invitations(meeting, meeting_participants):
                 f"Please find the calendar invitation attached.\n\n"
                 f"Thanks."
             )
-            
+
             msg = EmailMessage(
                 subject=subject,
                 body=body,
                 from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
                 to=[participant.email],
             )
-            
+
             msg.attach(
                 f"meeting-{meeting.id}.ics",
                 ics_bytes,
                 "text/calendar; charset=utf-8; method=REQUEST",
             )
-            
+
             msg.send(fail_silently=False)
             sent += 1
-            
+
         except Exception as e:
             logger.error(
                 f"Failed to send invitation to {participant.email} "
@@ -56,7 +56,7 @@ def send_meeting_invitations(meeting, meeting_participants):
                 "error": str(e)
             })
             continue
-  
+
     if failed:
         logger.warning(
             f"Meeting {meeting.id}: Sent {sent} invitations, "
@@ -64,5 +64,61 @@ def send_meeting_invitations(meeting, meeting_participants):
         )
     else:
         logger.info(f"Meeting {meeting.id}: Successfully sent {sent} invitations")
-    
+
+    return sent
+
+
+def notify_meeting_cancelled(meeting, *, reason: str = ""):
+    """মিটিং cancel হলে সব participant-কে জানানো হয়।"""
+    participants = meeting.meeting_participants.select_related("participant")
+    sent = 0
+    failed = []
+
+    for mp in participants:
+        participant = mp.participant
+
+        if not participant.email:
+            logger.warning(f"Skipping participant {participant.id} - no email address")
+            continue
+
+        try:
+            subject = f"Cancelled: {meeting.title}"
+            body = (
+                f"Hi {participant.name or participant.email},\n\n"
+                f"The following meeting has been cancelled:\n\n"
+                f"Title: {meeting.title}\n"
+                f"Time: {meeting.start_time} - {meeting.end_time}\n"
+                f"Location: {meeting.location or '-'}\n"
+            )
+            if reason:
+                body += f"\nReason: {reason}\n"
+
+            EmailMessage(
+                subject=subject,
+                body=body,
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                to=[participant.email],
+            ).send(fail_silently=False)
+
+            sent += 1
+
+        except Exception as e:
+            logger.error(
+                f"Failed to send cancellation email to {participant.email} "
+                f"for meeting {meeting.id}: {str(e)}"
+            )
+            failed.append({
+                "email": participant.email,
+                "error": str(e)
+            })
+            continue
+
+    if failed:
+        logger.warning(
+            f"Meeting {meeting.id}: Cancellation sent to {sent}, "
+            f"{len(failed)} failed: {failed}"
+        )
+    else:
+        logger.info(f"Meeting {meeting.id}: Cancellation notified to {sent} participants")
+
     return sent
